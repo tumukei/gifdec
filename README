@@ -18,6 +18,7 @@ Limitations
 
   * no support for GIF files that don't have a global color table
   * no direct support for the plain text extension (rarely used)
+  * not buffer under/overrun safe!
 
 
 Documentation
