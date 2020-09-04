@@ -32,7 +32,7 @@ read_num(FILE *fd)
  * Return pointer to gd_GIF if success or NULL on failure.
 */
 gd_GIF *
-gd_open_gif(const char *fname)
+gd_open_gif(const char *fname, int canvasdepth)
 {
     FILE *fd;
     uint8_t sigver[6];
@@ -41,6 +41,7 @@ gd_open_gif(const char *fname)
     int gct_sz;
     gd_GIF *gif = NULL;
     size_t sz;
+    int canvasbytes;
 
     fd = fopen(fname, "rb");
     if (!fd)
@@ -78,7 +79,15 @@ gd_open_gif(const char *fname)
     /* Aspect Ratio */
     aspect = fgetc(fd);
     /* Create gd_GIF Structure. */
-    gif = calloc(1, sizeof(*gif) + 4 * width * height);
+    if (canvasdepth > 16)
+        canvasbytes = 3;
+    else if (canvasdepth > 8)
+        canvasbytes = 2;
+    else
+        canvasbytes = 1;
+
+    gif->canvasbytes = canvasbytes;
+    gif = calloc(1, sizeof(*gif) + (width * height) + (canvasbytes * width * height));
     if (!gif) goto fail;
     gif->fd = fd;
     gif->width  = width;
@@ -92,7 +101,7 @@ gd_open_gif(const char *fname)
     gif->palette = &gif->gct;
     gif->bgindex = bgidx;
     gif->canvas = (uint8_t *) &gif[1];
-    gif->frame = &gif->canvas[3 * width * height];
+    gif->frame = &gif->canvas[canvasbytes * width * height];
     if (gif->bgindex)
         memset(gif->frame, gif->bgindex, gif->width * gif->height);
     gif->anim_start = ftell(fd);
@@ -431,6 +440,23 @@ read_image(gd_GIF *gif)
     return ret;
 }
 
+static int reduce_color(uint8_t *rgb, int to)
+{
+    int rd = 0;
+    if (to == 2) {
+        /* 565 */
+        rd = (0xf8 & rgb[0]) + (rgb[1]>>5);
+        rd <<= 8;
+        rd += (0x1c & rgb[1])<<3 + (rgb[2]>>3);
+    }
+    else if (to == 1) {
+        /* 332 */
+        rd = (0xe0 & rgb[0]) + (0xe0 & rgb[1]>>3) + (0xc0 & rgb[2])>>6;
+    }
+
+    return rd;
+}
+
 static void
 render_frame_rect(gd_GIF *gif, uint8_t *buffer)
 {
@@ -442,7 +468,20 @@ render_frame_rect(gd_GIF *gif, uint8_t *buffer)
             index = gif->frame[(gif->fy + j) * gif->width + gif->fx + k];
             color = &gif->palette->colors[index*3];
             if (!gif->gce.transparency || index != gif->gce.tindex)
-                memcpy(&buffer[(i+k)*3], color, 3);
+                if (gif->canvasbytes == 3)
+                    memcpy(&buffer[(i+k)*3], color, 3);
+                else if (gif->canvasbytes == 2)
+                {
+                    int col;
+                    col = reduce_color(color, 2);
+                    buffer[(i+k)*2] = col >> 8;
+                    buffer[(i+k)*2 + 1] = col;
+                }
+                else
+                {
+                    buffer[(i+k)] = reduce_color(color, 1);
+                }
+
         }
         i += gif->width;
     }
@@ -459,7 +498,17 @@ dispose(gd_GIF *gif)
         i = gif->fy * gif->width + gif->fx;
         for (j = 0; j < gif->fh; j++) {
             for (k = 0; k < gif->fw; k++)
-                memcpy(&gif->canvas[(i+k)*3], bgcolor, 3);
+                if (gif->canvasbytes == 3)
+                    memcpy(&gif->canvas[(i+k)*3], bgcolor, 3);
+                else if (gif->canvasbytes == 2) {
+                    int col;
+                    col = reduce_color(bgcolor, 2);
+                    gif->canvas[(i+k)*2] = col >> 8;
+                    gif->canvas[(i+k)*2 + 1] = col;
+                }
+                else {
+                    gif->canvas[(i+k)] = reduce_color(bgcolor, 1);
+                }
             i += gif->width;
         }
         break;
