@@ -436,7 +436,6 @@ read_image(gd_GIF *gif)
         gif->palette = &gif->gct;
     /* Image Data. */
     ret = read_image_data(gif, interlace);
-    free(gif->frame);
     return ret;
 }
 
